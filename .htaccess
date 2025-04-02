@@ -1,0 +1,8 @@
+RewriteEngine on
+
+# Redirect / to index.html
+RewriteRule ^$ index.html [L]
+
+# Remove .html extension for other pages
+RewriteCond %{REQUEST_FILENAME}.html -f
+RewriteRule ^([^\.]+)$ $1.html [NC,L]
