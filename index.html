@@ -1927,16 +1927,11 @@
     <main class="container mx-auto px-4 py-6">
         <div class="flex flex-col md:flex-row">
             <!-- Left Sidebar - Hidden on mobile by default -->
-            <div id="sidebar" class="sidebar-container md:block md:w-64 md:pr-6">
+            <div id="sidebar" class="sidebar-container md:block md:w-70 md:pr-6">
                 <div class="sidebar-inner">
                     <button id="closeSidebar" class="md:hidden mb-4 flex items-center justify-center p-2">
                         <span class="material-icons">close</span>
                         <span class="ml-1">Close</span>
-                    </button>
-                    
-                    <button id="filterButton" class="mb-6 bg-blue-600 text-white flex items-center py-2 px-4 rounded-full">
-                        <span class="material-icons mr-1">close</span>
-                        <span>Clear Filters</span>
                     </button>
                     
                     <!-- Image Upload Section -->
@@ -2212,18 +2207,16 @@
                 // Set total fonts count after loading
                 totalFonts.textContent = fonts.length;
                 // Load the actual font files
-                loadGoogleFonts();
                 // Render all fonts
                 renderFonts(fonts);
             })
             .catch(error => {
                 console.error('Error loading CSV file:', error);
                 // Fallback to sample data if CSV fails to load
-                loadSampleFonts();
+
             });
     }
 
-    // Parse CSV data
     function parseCSV(csvText) {
         // Split by lines and remove any empty lines
         const lines = csvText.split('\n').filter(line => line.trim() !== '');
@@ -2233,17 +2226,38 @@
             // Handle CSV parsing with consideration for commas within quotes
             const row = parseCSVLine(lines[i]);
             
-            if (row.length >= 4) {
+            if (row.length >= 5) {
                 const name = row[0].trim();
                 const url = row[1].trim();
                 const designer = row[2].trim();
                 const variants = row[3].trim();
+                const tagsString = row[4].trim();
                 
-                // Determine font category based on name or apply default categorization
-                const category = determineCategory(name);
+                // Extract tags from the tags string (split by semicolons)
+                const tags = tagsString.split(';').map(tag => tag.trim());
                 
-                // Determine tags based on name and category
-                const tags = determineTags(name, category);
+                // Extract category from tags (first tag typically contains the category)
+                let category = 'Sans Serif'; // Default category
+                
+                // Look for category in tags
+                for (const tag of tags) {
+                    if (tag.includes('Sans Serif')) {
+                        category = 'Sans Serif';
+                        break;
+                    } else if (tag.includes('Serif') && !tag.includes('Sans')) {
+                        category = 'Serif';
+                        break;
+                    } else if (tag.includes('Script')) {
+                        category = 'Script';
+                        break;
+                    } else if (tag.includes('Display')) {
+                        category = 'Display';
+                        break;
+                    } else if (tag.includes('Monospace')) {
+                        category = 'Monospace';
+                        break;
+                    }
+                }
                 
                 // Create font family CSS class name - ensure it's web-safe
                 const cssFamily = formatFontNameForCSS(name);
@@ -2310,42 +2324,6 @@
         // Add the last field
         result.push(current);
         return result;
-    }
-    
-    // Load Google Fonts
-    function loadGoogleFonts() {
-        let fontsToLoad = [];
-        let fontStyles = '';
-        
-        fonts.forEach(font => {
-            if (font.fontFamily) {
-                // Add to list of fonts to load from Google
-                fontsToLoad.push(font.fontFamily.replace(/\s+/g, '+'));
-                
-                // Create CSS class for this font
-                fontStyles += `
-                    .${font.cssFamily} {
-                        font-family: "${font.fontFamily}", sans-serif;
-                        font-weight: 400;
-                        font-style: normal;
-                        font-stretch: normal;
-                        font-optical-sizing: auto;
-                        line-height: initial;
-                    }
-                `;
-            }
-        });
-        
-        // Create Google Fonts API URL
-        if (fontsToLoad.length > 0) {
-            const googleFontsLink = document.createElement('link');
-            googleFontsLink.rel = 'stylesheet';
-            googleFontsLink.href = `https://fonts.googleapis.com/css2?family=${fontsToLoad.join('&family=')}&display=swap`;
-            document.head.appendChild(googleFontsLink);
-            
-            // Add font styles
-            fontStylesContainer.textContent = fontStyles;
-        }
     }
     
     // Determine font category based on name
@@ -2453,54 +2431,6 @@
         return tags;
     }
     
-    // Fallback to sample data if CSV fails to load
-    function loadSampleFonts() {
-        fonts = [
-            {
-                name: 'Roboto',
-                designer: 'Christian Robertson, Paratype, Font Bureau',
-                variants: 'Variable (3 axes)',
-                sample: 'Everyone has the right to freedom of thought, conscience and religion',
-                category: 'Sans Serif',
-                cssFamily: 'gf_Roboto',
-                fontFamily: 'Roboto',
-                tags: ['business', 'calm', 'geometric', 'neo-grotesque'],
-                url: 'https://fonts.google.com/specimen/Roboto'
-            },
-            {
-                name: 'Noto Sans',
-                designer: 'Google',
-                variants: 'Variable (1 axis)',
-                sample: 'Everyone has the right to freedom of thought, conscience and religion',
-                category: 'Sans Serif',
-                cssFamily: 'gf_Noto_Sans',
-                fontFamily: 'Noto Sans',
-                tags: ['business', 'modern', 'geometric', 'rounded'],
-                url: 'https://fonts.google.com/specimen/Noto+Sans'
-            },
-            {
-                name: 'Bungee Tint',
-                designer: 'David Jonathan Ross',
-                variants: '1 style',
-                sample: 'EVERYONE HAS THE RIGHT TO FREEDOM OF THOUGHT',
-                category: 'Display',
-                cssFamily: 'gf_Bungee_Tint',
-                fontFamily: 'Bungee Tint',
-                tags: ['playful', 'loud', 'artistic', 'halloween'],
-                url: 'https://fonts.google.com/specimen/Bungee+Tint'
-            }
-        ];
-        
-        // Set total fonts count
-        totalFonts.textContent = fonts.length;
-        
-        // Load the Google Fonts
-        loadGoogleFonts();
-        
-        // Render fonts
-        renderFonts(fonts);
-    }
-    
     // Create font preview cards
     function renderFonts(fontsToRender) {
         fontList.innerHTML = '';
@@ -2515,9 +2445,7 @@
                 <div class="flex items-center justify-between mb-2">
                     <div>
                         <span class="font-medium text-lg">${font.name}</span>
-                        <span class="text-gray-500 ml-2">${font.variants}</span>
-                        <span class="text-gray-500 mx-2">|</span>
-                        <span class="text-gray-500">${font.designer}</span>
+                        <span class="text-gray-500 ml-2">${font.designer}</span>
                     </div>
                     <div>
                         <button class="like-button text-${isLiked ? 'red' : 'blue'}-600 hover:bg-${isLiked ? 'red' : 'blue'}-50 p-1 rounded" data-font="${font.name}">
@@ -2550,6 +2478,7 @@
             });
         });
     }
+    
 
     // Filter fonts based on active filters and search
     function filterFonts() {
@@ -2558,7 +2487,6 @@
         let filteredFonts = fonts.filter(font => 
             (font.name.toLowerCase().includes(searchTerm) || 
             font.designer.toLowerCase().includes(searchTerm) ||
-            font.category.toLowerCase().includes(searchTerm) ||
             font.tags.some(tag => tag.toLowerCase().includes(searchTerm)))
         );
         
@@ -2578,7 +2506,11 @@
                 for (const category in filtersByCategory) {
                     const categoryMatches = filtersByCategory[category].some(value => {
                         if (value === 'all') return true;
-                        return font.tags.includes(value);
+                        
+                        // Check if any of the font's tags includes this filter value
+                        return font.tags.some(tag => 
+                            tag.toLowerCase().includes(value.toLowerCase())
+                        );
                     });
                     
                     // If the font doesn't match any filter in this category, exclude it
@@ -2592,6 +2524,7 @@
         
         renderFonts(filteredFonts);
     }
+    
 
     // Search functionality
     searchInput.addEventListener('input', filterFonts);
@@ -2755,6 +2688,7 @@
         // Reset font list
         filterFonts();
     }
+    
 
     // Like/unlike functionality
     function toggleLike(fontName, button) {
