@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Video Call</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .video-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .video-wrapper {
+            position: relative;
+            width: 400px;
+        }
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background-color: #f0f0f0;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+        }
+        input {
+            padding: 8px;
+            margin-right: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4caf50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        .status {
+            margin-top: 12px;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .error {
+            color: #ff0000;
+            margin-top: 8px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>P2P Video Call</h1>
+        
+        <div id="setup">
+            <p>Enter a code to create or join a call. Share this code with another person to connect.</p>
+            <div>
+                <input type="text" id="room-id" placeholder="Enter call code">
+                <button id="create-btn">Create/Join Call</button>
+            </div>
+            <div id="error-message" class="error hidden"></div>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="video-container">
+            <div class="video-wrapper">
+                <video id="local-video" autoplay muted></video>
+                <p>You</p>
+            </div>
+            <div class="video-wrapper">
+                <video id="remote-video" autoplay></video>
+                <p>Remote User</p>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="mute-btn">Mute</button>
+            <button id="video-btn">Turn Off Video</button>
+            <button id="end-btn">End Call</button>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const setupDiv = document.getElementById('setup');
+        const roomIdInput = document.getElementById('room-id');
+        const createBtn = document.getElementById('create-btn');
+        const statusDiv = document.getElementById('status');
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+        const muteBtn = document.getElementById('mute-btn');
+        const videoBtn = document.getElementById('video-btn');
+        const endBtn = document.getElementById('end-btn');
+        const errorMessage = document.getElementById('error-message');
+
+        // Global variables
+        let peer;
+        let localStream;
+        let currentCall;
+        let isAudioMuted = false;
+        let isVideoOff = false;
+
+        // Initialize the application
+        async function init() {
+            try {
+                // Get user media (camera and microphone)
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: true,
+                    video: true
+                });
+                
+                // Display local video
+                localVideo.srcObject = localStream;
+                
+                setupEventListeners();
+            } catch (error) {
+                showError(`Error accessing camera and microphone: ${error.message}`);
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            createBtn.addEventListener('click', createOrJoinRoom);
+            muteBtn.addEventListener('click', toggleAudio);
+            videoBtn.addEventListener('click', toggleVideo);
+            endBtn.addEventListener('click', endCall);
+        }
+
+        // Create or join a room
+        function createOrJoinRoom() {
+            const roomId = roomIdInput.value.trim();
+            
+            if (!roomId) {
+                showError('Please enter a call code');
+                return;
+            }
+
+            hideError();
+            
+            // Initialize Peer connection
+            peer = new Peer(roomId);
+            
+            peer.on('open', (id) => {
+                statusDiv.textContent = `Your call code: ${id}. Waiting for someone to connect...`;
+                setupDiv.style.display = 'none';
+            });
+            
+            peer.on('call', (call) => {
+                currentCall = call;
+                call.answer(localStream);
+                setupCallEventListeners(call);
+            });
+            
+            peer.on('error', (err) => {
+                if (err.type === 'unavailable-id') {
+                    // ID is taken, try to connect to that peer
+                    connectToPeer(roomId);
+                } else {
+                    showError(`Peer error: ${err.message}`);
+                }
+            });
+        }
+
+        // Connect to a peer
+        function connectToPeer(peerId) {
+            statusDiv.textContent = `Connecting to ${peerId}...`;
+            
+            const call = peer.call(peerId, localStream);
+            currentCall = call;
+            setupCallEventListeners(call);
+        }
+
+        // Setup call event listeners
+        function setupCallEventListeners(call) {
+            call.on('stream', (remoteStream) => {
+                remoteVideo.srcObject = remoteStream;
+                statusDiv.textContent = 'Connected! Call in progress.';
+            });
+            
+            call.on('close', () => {
+                statusDiv.textContent = 'Call ended.';
+                remoteVideo.srcObject = null;
+                setupDiv.style.display = 'block';
+            });
+
+            call.on('error', (err) => {
+                showError(`Call error: ${err.message}`);
+            });
+        }
+
+        // Toggle audio
+        function toggleAudio() {
+            if (localStream) {
+                const audioTracks = localStream.getAudioTracks();
+                if (audioTracks.length > 0) {
+                    isAudioMuted = !isAudioMuted;
+                    audioTracks[0].enabled = !isAudioMuted;
+                    muteBtn.textContent = isAudioMuted ? 'Unmute' : 'Mute';
+                }
+            }
+        }
+
+        // Toggle video
+        function toggleVideo() {
+            if (localStream) {
+                const videoTracks = localStream.getVideoTracks();
+                if (videoTracks.length > 0) {
+                    isVideoOff = !isVideoOff;
+                    videoTracks[0].enabled = !isVideoOff;
+                    videoBtn.textContent = isVideoOff ? 'Turn On Video' : 'Turn Off Video';
+                }
+            }
+        }
+
+        // End call
+        function endCall() {
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+            
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            
+            statusDiv.textContent = 'Call ended.';
+            remoteVideo.srcObject = null;
+            setupDiv.style.display = 'block';
+        }
+
+        // Show error message
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        // Hide error message
+        function hideError() {
+            errorMessage.classList.add('hidden');
+        }
+
+        // Initialize on load
+        window.onload = init;
+
+        // Clean up on page unload
+        window.onbeforeunload = () => {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (currentCall) {
+                currentCall.close();
+            }
+            if (peer) {
+                peer.destroy();
+            }
+        };
+    </script>
+</body>
+</html>
