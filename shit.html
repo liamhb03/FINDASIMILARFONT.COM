@@ -64,6 +64,14 @@
         #qrcode {
             margin: 10px auto;
         }
+        .debug {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+            text-align: left;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -75,7 +83,8 @@
             <div class="input-group">
                 <label for="roomInput">Enter Room ID:</label>
                 <input type="text" id="roomInput" placeholder="Enter a unique room ID">
-                <button id="createRoomBtn">Create/Join Room</button>
+                <button id="createRoomBtn">Create Room</button>
+                <button id="joinRoomBtn">Join Room</button>
             </div>
             <p>Or scan this QR code to join:</p>
             <div id="qrcode"></div>
@@ -89,6 +98,8 @@
             <button id="callButton" disabled>Press to Talk</button>
             <button id="disconnectBtn">Disconnect</button>
         </div>
+        
+        <div class="debug" id="debugInfo"></div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
@@ -99,12 +110,14 @@
         const callContainer = document.getElementById('callContainer');
         const roomInput = document.getElementById('roomInput');
         const createRoomBtn = document.getElementById('createRoomBtn');
+        const joinRoomBtn = document.getElementById('joinRoomBtn');
         const setupStatus = document.getElementById('setupStatus');
         const roomDisplay = document.getElementById('roomDisplay');
         const connectionStatus = document.getElementById('connectionStatus');
         const callButton = document.getElementById('callButton');
         const disconnectBtn = document.getElementById('disconnectBtn');
         const qrcodeDiv = document.getElementById('qrcode');
+        const debugInfo = document.getElementById('debugInfo');
         
         // Variables for WebRTC
         let peer;
@@ -113,27 +126,43 @@
         let call;
         let roomId;
         let isHost = false;
+        let myPeerId = null;
+        
+        // Debug logging
+        function logDebug(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugInfo.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            console.log(`[${timestamp}] ${message}`);
+        }
         
         // Generate a random room ID if none provided
-        roomInput.value = Math.random().toString(36).substring(2, 8);
+        roomInput.value = Math.random().toString(36).substring(2, 6);
         
         // Create QR code with current URL
-        function generateQR(roomId) {
+        function generateQR(roomId, isJoining = true) {
             qrcodeDiv.innerHTML = '';
-            const roomUrl = `${window.location.href.split('?')[0]}?room=${roomId}`;
+            const roomUrl = `${window.location.href.split('?')[0]}?${isJoining ? 'join=' : 'host='}${roomId}`;
             new QRCode(qrcodeDiv, {
                 text: roomUrl,
                 width: 128,
                 height: 128
             });
+            logDebug(`Generated QR for URL: ${roomUrl}`);
         }
         
         // Check URL for room parameter
         window.addEventListener('load', () => {
             const urlParams = new URLSearchParams(window.location.search);
-            const roomParam = urlParams.get('room');
-            if (roomParam) {
-                roomInput.value = roomParam;
+            const joinRoom = urlParams.get('join');
+            const hostRoom = urlParams.get('host');
+            
+            if (joinRoom) {
+                roomInput.value = joinRoom;
+                logDebug(`URL contains join parameter: ${joinRoom}`);
+                joinRoomBtn.click();
+            } else if (hostRoom) {
+                roomInput.value = hostRoom;
+                logDebug(`URL contains host parameter: ${hostRoom}`);
                 createRoomBtn.click();
             } else {
                 generateQR(roomInput.value);
@@ -145,6 +174,20 @@
             generateQR(roomInput.value);
         });
         
+        // Custom PeerJS server options
+        const peerOptions = {
+            host: 'peerjs-server.herokuapp.com',
+            secure: true,
+            port: 443,
+            debug: 3,
+            config: {
+                'iceServers': [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }
+                ]
+            }
+        };
+        
         // Setup audio
         async function setupAudio() {
             try {
@@ -155,74 +198,17 @@
                     track.enabled = false;
                 });
                 
+                logDebug('Audio setup successful');
                 return true;
             } catch (err) {
                 console.error('Failed to get local stream', err);
+                logDebug(`Audio setup failed: ${err.message}`);
                 connectionStatus.textContent = 'Error: Could not access microphone';
                 return false;
             }
         }
         
-        // Try to create a room (be the host)
-        async function createRoom(roomId) {
-            return new Promise((resolve, reject) => {
-                // Create peer with specific ID
-                peer = new Peer(roomId);
-                isHost = true;
-                
-                peer.on('open', (id) => {
-                    setupStatus.textContent = `Room created! Your ID: ${id}`;
-                    roomDisplay.textContent = id;
-                    resolve(true);
-                });
-                
-                peer.on('error', (err) => {
-                    console.log('Room creation error:', err.type);
-                    if (err.type === 'unavailable-id') {
-                        // Room ID is taken, we'll join instead
-                        resolve(false);
-                    } else {
-                        setupStatus.textContent = `Error: ${err.message}`;
-                        reject(err);
-                    }
-                });
-            });
-        }
-        
-        // Join an existing room
-        function joinRoom(roomId) {
-            return new Promise((resolve, reject) => {
-                // Create peer with random ID
-                peer = new Peer();
-                isHost = false;
-                
-                peer.on('open', (id) => {
-                    setupStatus.textContent = `Connecting to room: ${roomId}`;
-                    roomDisplay.textContent = roomId;
-                    
-                    // Connect to the host peer
-                    conn = peer.connect(roomId);
-                    
-                    conn.on('open', () => {
-                        setupStatus.textContent = `Connected to room: ${roomId}`;
-                        handleConnection();
-                        resolve(true);
-                    });
-                    
-                    conn.on('error', (err) => {
-                        setupStatus.textContent = `Connection error: ${err.message}`;
-                        reject(err);
-                    });
-                });
-                
-                peer.on('error', (err) => {
-                    setupStatus.textContent = `Peer error: ${err.message}`;
-                    reject(err);
-                });
-            });
-        }
-        
-        // Setup connection
+        // Create a room (host)
         createRoomBtn.addEventListener('click', async () => {
             roomId = roomInput.value.trim();
             if (!roomId) {
@@ -230,7 +216,8 @@
                 return;
             }
             
-            setupStatus.textContent = 'Initializing...';
+            setupStatus.textContent = 'Creating room...';
+            logDebug(`Creating room with ID: ${roomId}`);
             
             // Setup audio first
             const hasAudio = await setupAudio();
@@ -239,57 +226,133 @@
                 return;
             }
             
-            try {
-                // First try to create a room (be the host)
-                const isCreated = await createRoom(roomId);
-                
-                if (!isCreated) {
-                    // If room exists, join it
-                    setupStatus.textContent = 'Room exists, joining as guest...';
-                    await joinRoom(roomId);
-                }
+            // Create a peer with a random ID (more reliable than specifying an ID)
+            peer = new Peer(peerOptions);
+            isHost = true;
+            
+            peer.on('open', (id) => {
+                myPeerId = id;
+                setupStatus.textContent = `Room created! Your peer ID: ${id}`;
+                roomDisplay.textContent = roomId;
+                generateQR(roomId, false);
+                logDebug(`Room created. Peer ID: ${id}`);
                 
                 // Switch to call container
                 setupContainer.classList.add('hidden');
                 callContainer.classList.remove('hidden');
                 
-                // Setup event listeners for host role
-                if (isHost) {
-                    // Handle incoming connections
-                    peer.on('connection', (connection) => {
-                        conn = connection;
+                // Listen for connections
+                peer.on('connection', (connection) => {
+                    logDebug(`Incoming connection from a peer`);
+                    conn = connection;
+                    
+                    conn.on('open', () => {
+                        logDebug(`Connection open with peer: ${conn.peer}`);
                         handleConnection();
                     });
                     
-                    // Handle incoming calls
-                    peer.on('call', (incomingCall) => {
-                        call = incomingCall;
-                        connectionStatus.textContent = 'Incoming call...';
-                        
-                        // Answer call with our stream
-                        call.answer(localStream);
-                        handleCall();
+                    conn.on('error', (err) => {
+                        logDebug(`Connection error: ${err}`);
+                        connectionStatus.textContent = `Connection error: ${err}`;
                     });
-                } else {
-                    // We're the guest, so initiate the call
-                    if (localStream) {
-                        call = peer.call(roomId, localStream);
-                        handleCall();
-                    }
-                }
+                });
                 
-            } catch (err) {
-                console.error('Setup error:', err);
-                setupStatus.textContent = `Setup error: ${err.message}`;
+                // Handle incoming calls
+                peer.on('call', (incomingCall) => {
+                    logDebug(`Incoming call from peer`);
+                    call = incomingCall;
+                    connectionStatus.textContent = 'Incoming call...';
+                    
+                    // Answer call with our stream
+                    call.answer(localStream);
+                    handleCall();
+                });
+            });
+            
+            peer.on('error', (err) => {
+                logDebug(`Peer error: ${err.type} - ${err.message}`);
+                setupStatus.textContent = `Error: ${err.message}`;
+            });
+        });
+        
+        // Join an existing room
+        joinRoomBtn.addEventListener('click', async () => {
+            roomId = roomInput.value.trim();
+            if (!roomId) {
+                setupStatus.textContent = 'Please enter a room ID';
+                return;
             }
+            
+            setupStatus.textContent = 'Joining room...';
+            logDebug(`Joining room with ID: ${roomId}`);
+            
+            // Setup audio first
+            const hasAudio = await setupAudio();
+            if (!hasAudio) {
+                setupStatus.textContent = 'Error: Could not access microphone';
+                return;
+            }
+            
+            // Create peer with random ID
+            peer = new Peer(peerOptions);
+            isHost = false;
+            
+            peer.on('open', (id) => {
+                myPeerId = id;
+                setupStatus.textContent = `Your peer ID: ${id}. Connecting to room: ${roomId}...`;
+                roomDisplay.textContent = roomId;
+                logDebug(`Your peer ID: ${id}. Attempting to connect to host.`);
+                
+                // Switch to call container
+                setupContainer.classList.add('hidden');
+                callContainer.classList.remove('hidden');
+                
+                // Connect to all available peers in the mesh
+                logDebug(`Attempting to connect to known hosts for room: ${roomId}`);
+                
+                // Try to connect to the peer with the roomId
+                conn = peer.connect(roomId, {
+                    reliable: true
+                });
+                
+                // Connection established
+                conn.on('open', () => {
+                    logDebug(`Connection established with peer: ${conn.peer}`);
+                    handleConnection();
+                    
+                    // Create a call to the peer
+                    logDebug(`Initiating call to peer: ${conn.peer}`);
+                    call = peer.call(conn.peer, localStream);
+                    handleCall();
+                });
+                
+                // Connection failed
+                conn.on('error', (err) => {
+                    logDebug(`Connection error: ${err}`);
+                    connectionStatus.textContent = `Connection error: ${err}`;
+                });
+            });
+            
+            peer.on('error', (err) => {
+                logDebug(`Peer error: ${err.type} - ${err.message}`);
+                setupStatus.textContent = `Error: ${err.message}`;
+            });
         });
         
         // Handle connection
         function handleConnection() {
             connectionStatus.textContent = 'Connected to peer!';
+            logDebug(`Connection established with peer: ${conn.peer}`);
+            
             callButton.disabled = false;
             
+            conn.on('data', (data) => {
+                logDebug(`Received data: ${JSON.stringify(data)}`);
+                // You could implement text messaging here if desired
+            });
+            
             conn.on('close', () => {
+                logDebug(`Connection closed with peer: ${conn.peer}`);
                 connectionStatus.textContent = 'Peer disconnected';
                 callButton.disabled = true;
             });
@@ -297,7 +360,10 @@
         
         // Handle call
         function handleCall() {
+            logDebug(`Call handler setup`);
+            
             call.on('stream', (remoteStream) => {
+                logDebug(`Received remote stream`);
                 // Create audio element for remote stream
                 const audio = document.createElement('audio');
                 audio.srcObject = remoteStream;
@@ -306,12 +372,19 @@
                 document.body.appendChild(audio);
                 
                 connectionStatus.textContent = 'Connected! Audio channel established.';
+                logDebug(`Audio element created and playing remote stream`);
             });
             
             call.on('close', () => {
+                logDebug(`Call closed`);
                 const audio = document.getElementById('remoteAudio');
                 if (audio) audio.remove();
                 connectionStatus.textContent = 'Call ended';
+            });
+            
+            call.on('error', (err) => {
+                logDebug(`Call error: ${err}`);
+                connectionStatus.textContent = `Call error: ${err}`;
             });
         }
         
@@ -322,6 +395,7 @@
                     track.enabled = true;
                 });
                 callButton.textContent = 'Talking...';
+                logDebug(`Microphone activated`);
             }
         });
         
@@ -331,6 +405,7 @@
                     track.enabled = false;
                 });
                 callButton.textContent = 'Press to Talk';
+                logDebug(`Microphone deactivated`);
             }
         });
         
@@ -342,6 +417,7 @@
                     track.enabled = true;
                 });
                 callButton.textContent = 'Talking...';
+                logDebug(`Microphone activated (touch)`);
             }
         });
         
@@ -351,11 +427,13 @@
                     track.enabled = false;
                 });
                 callButton.textContent = 'Press to Talk';
+                logDebug(`Microphone deactivated (touch)`);
             }
         });
         
         // Disconnect button
         disconnectBtn.addEventListener('click', () => {
+            logDebug(`Disconnecting...`);
             if (call) call.close();
             if (conn) conn.close();
             if (peer) peer.destroy();
@@ -375,8 +453,9 @@
             if (audio) audio.remove();
             
             // Generate a new random room ID
-            roomInput.value = Math.random().toString(36).substring(2, 8);
+            roomInput.value = Math.random().toString(36).substring(2, 6);
             generateQR(roomInput.value);
+            logDebug(`Disconnected and reset`);
         });
     </script>
 </body>
