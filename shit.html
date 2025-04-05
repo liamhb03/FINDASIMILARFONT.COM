@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Walkie Talkie</title>
+    <title>Simple Walkie Talkie</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -17,12 +17,26 @@
             flex-direction: column;
             gap: 20px;
         }
-        .setup-container, .call-container {
+        .panel {
             border: 1px solid #ccc;
             padding: 20px;
             border-radius: 10px;
+            margin-bottom: 20px;
         }
-        #callButton {
+        .button {
+            padding: 10px;
+            margin: 5px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            background-color: #f5f5f5;
+            cursor: pointer;
+        }
+        #roomInput {
+            padding: 10px;
+            width: 200px;
+            margin: 5px;
+        }
+        .talk-button {
             width: 200px;
             height: 200px;
             border-radius: 50%;
@@ -38,21 +52,14 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
             transition: all 0.3s;
         }
-        #callButton:active {
+        .talk-button:active {
             background-color: #d32f2f;
             transform: scale(0.95);
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
-        #callButton:disabled {
+        .talk-button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
-        }
-        .input-group {
-            margin-bottom: 15px;
-        }
-        input, button {
-            padding: 10px;
-            margin: 5px;
         }
         .status {
             font-weight: bold;
@@ -61,401 +68,362 @@
         .hidden {
             display: none;
         }
-        #qrcode {
-            margin: 10px auto;
-        }
-        .debug {
-            margin-top: 20px;
-            font-size: 12px;
-            color: #666;
+        .logs {
             text-align: left;
-            border-top: 1px solid #eee;
-            padding-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-top: 20px;
         }
     </style>
 </head>
 <body>
-    <h1>Web Walkie Talkie</h1>
+    <h1>Simple Walkie Talkie</h1>
     
     <div class="container">
-        <div class="setup-container" id="setupContainer">
-            <h2>Setup Connection</h2>
-            <div class="input-group">
-                <label for="roomInput">Enter Room ID:</label>
-                <input type="text" id="roomInput" placeholder="Enter a unique room ID">
-                <button id="createRoomBtn">Create Room</button>
-                <button id="joinRoomBtn">Join Room</button>
-            </div>
-            <p>Or scan this QR code to join:</p>
-            <div id="qrcode"></div>
+        <div class="panel" id="setupPanel">
+            <h2>Enter Room</h2>
+            <p>Both users need to enter the same room name:</p>
+            <input type="text" id="roomInput" placeholder="Enter room name" value="testroom">
+            <button class="button" id="joinBtn">Join Room</button>
             <p class="status" id="setupStatus"></p>
         </div>
         
-        <div class="call-container hidden" id="callContainer">
-            <h2>Connected to: <span id="roomDisplay"></span></h2>
-            <p class="status" id="connectionStatus">Waiting for peer...</p>
+        <div class="panel hidden" id="callPanel">
+            <h2>Room: <span id="roomName"></span></h2>
+            <p class="status" id="peerStatus">Waiting for peer...</p>
             <p>Press and hold to talk:</p>
-            <button id="callButton" disabled>Press to Talk</button>
-            <button id="disconnectBtn">Disconnect</button>
+            <button class="talk-button" id="talkBtn" disabled>Press to Talk</button>
+            <button class="button" id="leaveBtn">Leave Room</button>
         </div>
         
-        <div class="debug" id="debugInfo"></div>
+        <div class="logs" id="logPanel"></div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Simple-Peer for WebRTC -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
     <script>
         // DOM elements
-        const setupContainer = document.getElementById('setupContainer');
-        const callContainer = document.getElementById('callContainer');
+        const setupPanel = document.getElementById('setupPanel');
+        const callPanel = document.getElementById('callPanel');
         const roomInput = document.getElementById('roomInput');
-        const createRoomBtn = document.getElementById('createRoomBtn');
-        const joinRoomBtn = document.getElementById('joinRoomBtn');
+        const joinBtn = document.getElementById('joinBtn');
         const setupStatus = document.getElementById('setupStatus');
-        const roomDisplay = document.getElementById('roomDisplay');
-        const connectionStatus = document.getElementById('connectionStatus');
-        const callButton = document.getElementById('callButton');
-        const disconnectBtn = document.getElementById('disconnectBtn');
-        const qrcodeDiv = document.getElementById('qrcode');
-        const debugInfo = document.getElementById('debugInfo');
+        const roomName = document.getElementById('roomName');
+        const peerStatus = document.getElementById('peerStatus');
+        const talkBtn = document.getElementById('talkBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const logPanel = document.getElementById('logPanel');
         
-        // Variables for WebRTC
-        let peer;
-        let conn;
+        // Variables
         let localStream;
-        let call;
-        let roomId;
-        let isHost = false;
-        let myPeerId = null;
+        let isTalking = false;
+        let peers = [];
+        let connectedPeers = 0;
         
-        // Debug logging
-        function logDebug(message) {
+        // Logging function
+        function log(message) {
             const timestamp = new Date().toLocaleTimeString();
-            debugInfo.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            logPanel.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            logPanel.scrollTop = logPanel.scrollHeight;
             console.log(`[${timestamp}] ${message}`);
         }
         
-        // Generate a random room ID if none provided
-        roomInput.value = Math.random().toString(36).substring(2, 6);
-        
-        // Create QR code with current URL
-        function generateQR(roomId, isJoining = true) {
-            qrcodeDiv.innerHTML = '';
-            const roomUrl = `${window.location.href.split('?')[0]}?${isJoining ? 'join=' : 'host='}${roomId}`;
-            new QRCode(qrcodeDiv, {
-                text: roomUrl,
-                width: 128,
-                height: 128
-            });
-            logDebug(`Generated QR for URL: ${roomUrl}`);
-        }
-        
-        // Check URL for room parameter
-        window.addEventListener('load', () => {
-            const urlParams = new URLSearchParams(window.location.search);
-            const joinRoom = urlParams.get('join');
-            const hostRoom = urlParams.get('host');
-            
-            if (joinRoom) {
-                roomInput.value = joinRoom;
-                logDebug(`URL contains join parameter: ${joinRoom}`);
-                joinRoomBtn.click();
-            } else if (hostRoom) {
-                roomInput.value = hostRoom;
-                logDebug(`URL contains host parameter: ${hostRoom}`);
-                createRoomBtn.click();
-            } else {
-                generateQR(roomInput.value);
-            }
-        });
-        
-        // Update QR code when room ID changes
-        roomInput.addEventListener('input', () => {
-            generateQR(roomInput.value);
-        });
-        
-        // Custom PeerJS server options
-        const peerOptions = {
-            host: 'peerjs-server.herokuapp.com',
-            secure: true,
-            port: 443,
-            debug: 3,
-            config: {
-                'iceServers': [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }
-                ]
-            }
-        };
-        
-        // Setup audio
-        async function setupAudio() {
+        // Initialize peer connection with WebRTC
+        async function initializeWebRTC() {
             try {
+                log("Getting audio stream...");
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 
-                // Set up audio track to be disabled initially (muted)
+                // Mute the stream initially
                 localStream.getAudioTracks().forEach(track => {
                     track.enabled = false;
                 });
                 
-                logDebug('Audio setup successful');
+                log("Audio stream initialized");
                 return true;
-            } catch (err) {
-                console.error('Failed to get local stream', err);
-                logDebug(`Audio setup failed: ${err.message}`);
-                connectionStatus.textContent = 'Error: Could not access microphone';
+            } catch (error) {
+                log(`Error getting media stream: ${error.message}`);
+                setupStatus.textContent = `Microphone error: ${error.message}`;
                 return false;
             }
         }
         
-        // Create a room (host)
-        createRoomBtn.addEventListener('click', async () => {
-            roomId = roomInput.value.trim();
-            if (!roomId) {
-                setupStatus.textContent = 'Please enter a room ID';
-                return;
-            }
-            
-            setupStatus.textContent = 'Creating room...';
-            logDebug(`Creating room with ID: ${roomId}`);
-            
-            // Setup audio first
-            const hasAudio = await setupAudio();
-            if (!hasAudio) {
-                setupStatus.textContent = 'Error: Could not access microphone';
-                return;
-            }
-            
-            // Create a peer with a random ID (more reliable than specifying an ID)
-            peer = new Peer(peerOptions);
-            isHost = true;
-            
-            peer.on('open', (id) => {
-                myPeerId = id;
-                setupStatus.textContent = `Room created! Your peer ID: ${id}`;
-                roomDisplay.textContent = roomId;
-                generateQR(roomId, false);
-                logDebug(`Room created. Peer ID: ${id}`);
-                
-                // Switch to call container
-                setupContainer.classList.add('hidden');
-                callContainer.classList.remove('hidden');
-                
-                // Listen for connections
-                peer.on('connection', (connection) => {
-                    logDebug(`Incoming connection from a peer`);
-                    conn = connection;
-                    
-                    conn.on('open', () => {
-                        logDebug(`Connection open with peer: ${conn.peer}`);
-                        handleConnection();
-                    });
-                    
-                    conn.on('error', (err) => {
-                        logDebug(`Connection error: ${err}`);
-                        connectionStatus.textContent = `Connection error: ${err}`;
-                    });
-                });
-                
-                // Handle incoming calls
-                peer.on('call', (incomingCall) => {
-                    logDebug(`Incoming call from peer`);
-                    call = incomingCall;
-                    connectionStatus.textContent = 'Incoming call...';
-                    
-                    // Answer call with our stream
-                    call.answer(localStream);
-                    handleCall();
-                });
-            });
-            
-            peer.on('error', (err) => {
-                logDebug(`Peer error: ${err.type} - ${err.message}`);
-                setupStatus.textContent = `Error: ${err.message}`;
-            });
-        });
-        
-        // Join an existing room
-        joinRoomBtn.addEventListener('click', async () => {
-            roomId = roomInput.value.trim();
-            if (!roomId) {
-                setupStatus.textContent = 'Please enter a room ID';
-                return;
-            }
-            
-            setupStatus.textContent = 'Joining room...';
-            logDebug(`Joining room with ID: ${roomId}`);
-            
-            // Setup audio first
-            const hasAudio = await setupAudio();
-            if (!hasAudio) {
-                setupStatus.textContent = 'Error: Could not access microphone';
-                return;
-            }
-            
-            // Create peer with random ID
-            peer = new Peer(peerOptions);
-            isHost = false;
-            
-            peer.on('open', (id) => {
-                myPeerId = id;
-                setupStatus.textContent = `Your peer ID: ${id}. Connecting to room: ${roomId}...`;
-                roomDisplay.textContent = roomId;
-                logDebug(`Your peer ID: ${id}. Attempting to connect to host.`);
-                
-                // Switch to call container
-                setupContainer.classList.add('hidden');
-                callContainer.classList.remove('hidden');
-                
-                // Connect to all available peers in the mesh
-                logDebug(`Attempting to connect to known hosts for room: ${roomId}`);
-                
-                // Try to connect to the peer with the roomId
-                conn = peer.connect(roomId, {
-                    reliable: true
-                });
-                
-                // Connection established
-                conn.on('open', () => {
-                    logDebug(`Connection established with peer: ${conn.peer}`);
-                    handleConnection();
-                    
-                    // Create a call to the peer
-                    logDebug(`Initiating call to peer: ${conn.peer}`);
-                    call = peer.call(conn.peer, localStream);
-                    handleCall();
-                });
-                
-                // Connection failed
-                conn.on('error', (err) => {
-                    logDebug(`Connection error: ${err}`);
-                    connectionStatus.textContent = `Connection error: ${err}`;
-                });
-            });
-            
-            peer.on('error', (err) => {
-                logDebug(`Peer error: ${err.type} - ${err.message}`);
-                setupStatus.textContent = `Error: ${err.message}`;
-            });
-        });
-        
-        // Handle connection
-        function handleConnection() {
-            connectionStatus.textContent = 'Connected to peer!';
-            logDebug(`Connection established with peer: ${conn.peer}`);
-            
-            callButton.disabled = false;
-            
-            conn.on('data', (data) => {
-                logDebug(`Received data: ${JSON.stringify(data)}`);
-                // You could implement text messaging here if desired
-            });
-            
-            conn.on('close', () => {
-                logDebug(`Connection closed with peer: ${conn.peer}`);
-                connectionStatus.textContent = 'Peer disconnected';
-                callButton.disabled = true;
-            });
+        // Secure hash function for room name
+        async function hashRoomName(roomName) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(roomName);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex;
         }
         
-        // Handle call
-        function handleCall() {
-            logDebug(`Call handler setup`);
+        // Create a peer connection
+        function createPeer(initiator) {
+            log(`Creating peer (initiator: ${initiator})`);
             
-            call.on('stream', (remoteStream) => {
-                logDebug(`Received remote stream`);
-                // Create audio element for remote stream
+            const peer = new SimplePeer({
+                initiator: initiator,
+                stream: localStream,
+                trickle: false,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ]
+                }
+            });
+            
+            peer.on('signal', data => {
+                // Convert signal data to base64 string
+                const signalString = btoa(JSON.stringify(data));
+                log(`Generated signal data (${data.type})`);
+                
+                // Add the signal to local storage with timestamp (used for signaling)
+                const timestamp = Date.now();
+                const roomKey = roomInput.value;
+                const signalData = {
+                    timestamp,
+                    signal: signalString,
+                    isInitiator: initiator
+                };
+                
+                // Append to existing signals or create new array
+                const existingSignals = JSON.parse(localStorage.getItem(roomKey) || '[]');
+                existingSignals.push(signalData);
+                localStorage.setItem(roomKey, JSON.stringify(existingSignals));
+                
+                log(`Signal saved to localStorage (${data.type})`);
+            });
+            
+            peer.on('connect', () => {
+                connectedPeers++;
+                log(`Peer connected! Total connections: ${connectedPeers}`);
+                peerStatus.textContent = `Connected to peer!`;
+                talkBtn.disabled = false;
+                
+                // Send initial test data
+                peer.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+            });
+            
+            peer.on('data', data => {
+                const message = JSON.parse(data);
+                log(`Received data: ${message.type}`);
+                
+                if (message.type === 'ping') {
+                    peer.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+                }
+            });
+            
+            peer.on('stream', stream => {
+                log(`Remote stream received`);
+                
+                // Create an audio element to play the remote stream
                 const audio = document.createElement('audio');
-                audio.srcObject = remoteStream;
+                audio.srcObject = stream;
                 audio.id = 'remoteAudio';
-                audio.autoplay = true;
+                audio.play();
                 document.body.appendChild(audio);
-                
-                connectionStatus.textContent = 'Connected! Audio channel established.';
-                logDebug(`Audio element created and playing remote stream`);
             });
             
-            call.on('close', () => {
-                logDebug(`Call closed`);
-                const audio = document.getElementById('remoteAudio');
-                if (audio) audio.remove();
-                connectionStatus.textContent = 'Call ended';
+            peer.on('error', err => {
+                log(`Peer error: ${err.message}`);
             });
             
-            call.on('error', (err) => {
-                logDebug(`Call error: ${err}`);
-                connectionStatus.textContent = `Call error: ${err}`;
+            peer.on('close', () => {
+                log(`Peer connection closed`);
+                connectedPeers--;
+                if (connectedPeers === 0) {
+                    peerStatus.textContent = 'Waiting for peer...';
+                    talkBtn.disabled = true;
+                }
             });
+            
+            return peer;
         }
+        
+        // Start signaling process
+        async function startSignaling() {
+            const roomKey = roomInput.value;
+            log(`Starting signaling for room: ${roomKey}`);
+            
+            // Create a peer as initiator first
+            const initiatorPeer = createPeer(true);
+            peers.push(initiatorPeer);
+            
+            // Create a peer as non-initiator to accept incoming connections
+            const receiverPeer = createPeer(false);
+            peers.push(receiverPeer);
+            
+            // Poll local storage for signals every 1 second
+            const signalInterval = setInterval(() => {
+                try {
+                    const signals = JSON.parse(localStorage.getItem(roomKey) || '[]');
+                    
+                    // Process new signals (that we haven't processed yet)
+                    signals.forEach((signalData, index) => {
+                        // Skip our own signals
+                        if (signalData.processed) {
+                            return;
+                        }
+                        
+                        // Mark as processed
+                        signals[index].processed = true;
+                        
+                        try {
+                            // Decode the signal
+                            const signalObj = JSON.parse(atob(signalData.signal));
+                            log(`Processing signal (${signalObj.type})`);
+                            
+                            // Send to appropriate peer
+                            if (signalData.isInitiator) {
+                                receiverPeer.signal(signalObj);
+                            } else {
+                                initiatorPeer.signal(signalObj);
+                            }
+                        } catch (e) {
+                            log(`Error processing signal: ${e.message}`);
+                        }
+                    });
+                    
+                    // Update localStorage with processed flags
+                    localStorage.setItem(roomKey, JSON.stringify(signals));
+                } catch (e) {
+                    log(`Error in signal processing: ${e.message}`);
+                }
+            }, 1000);
+            
+            // Store interval for cleanup
+            window.signalInterval = signalInterval;
+        }
+        
+        // Join room button handler
+        joinBtn.addEventListener('click', async () => {
+            const room = roomInput.value.trim();
+            if (!room) {
+                setupStatus.textContent = 'Please enter a room name';
+                return;
+            }
+            
+            setupStatus.textContent = 'Initializing...';
+            log(`Joining room: ${room}`);
+            
+            // Initialize WebRTC
+            const success = await initializeWebRTC();
+            if (!success) {
+                return;
+            }
+            
+            // Switch to call panel
+            setupPanel.classList.add('hidden');
+            callPanel.classList.remove('hidden');
+            roomName.textContent = room;
+            
+            // Start signaling
+            startSignaling();
+        });
         
         // Push-to-talk functionality
-        callButton.addEventListener('mousedown', () => {
+        talkBtn.addEventListener('mousedown', () => {
             if (localStream) {
                 localStream.getAudioTracks().forEach(track => {
                     track.enabled = true;
                 });
-                callButton.textContent = 'Talking...';
-                logDebug(`Microphone activated`);
+                talkBtn.textContent = 'Talking...';
+                isTalking = true;
+                log(`Microphone activated`);
             }
         });
         
-        callButton.addEventListener('mouseup', () => {
+        talkBtn.addEventListener('mouseup', () => {
             if (localStream) {
                 localStream.getAudioTracks().forEach(track => {
                     track.enabled = false;
                 });
-                callButton.textContent = 'Press to Talk';
-                logDebug(`Microphone deactivated`);
+                talkBtn.textContent = 'Press to Talk';
+                isTalking = false;
+                log(`Microphone deactivated`);
             }
         });
         
         // For touch devices
-        callButton.addEventListener('touchstart', (e) => {
+        talkBtn.addEventListener('touchstart', (e) => {
             e.preventDefault();
             if (localStream) {
                 localStream.getAudioTracks().forEach(track => {
                     track.enabled = true;
                 });
-                callButton.textContent = 'Talking...';
-                logDebug(`Microphone activated (touch)`);
+                talkBtn.textContent = 'Talking...';
+                isTalking = true;
+                log(`Microphone activated (touch)`);
             }
         });
         
-        callButton.addEventListener('touchend', () => {
+        talkBtn.addEventListener('touchend', () => {
             if (localStream) {
                 localStream.getAudioTracks().forEach(track => {
                     track.enabled = false;
                 });
-                callButton.textContent = 'Press to Talk';
-                logDebug(`Microphone deactivated (touch)`);
+                talkBtn.textContent = 'Press to Talk';
+                isTalking = false;
+                log(`Microphone deactivated (touch)`);
             }
         });
         
-        // Disconnect button
-        disconnectBtn.addEventListener('click', () => {
-            logDebug(`Disconnecting...`);
-            if (call) call.close();
-            if (conn) conn.close();
-            if (peer) peer.destroy();
+        // Leave room button handler
+        leaveBtn.addEventListener('click', () => {
+            log(`Leaving room`);
             
-            // Return to setup
-            callContainer.classList.add('hidden');
-            setupContainer.classList.remove('hidden');
-            setupStatus.textContent = '';
+            // Close all peer connections
+            peers.forEach(peer => {
+                if (peer) peer.destroy();
+            });
+            peers = [];
             
-            // Cleanup
+            // Clear interval
+            if (window.signalInterval) {
+                clearInterval(window.signalInterval);
+            }
+            
+            // Stop media tracks
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
             
-            const audio = document.getElementById('remoteAudio');
-            if (audio) audio.remove();
+            // Remove remote audio
+            const remoteAudio = document.getElementById('remoteAudio');
+            if (remoteAudio) remoteAudio.remove();
             
-            // Generate a new random room ID
-            roomInput.value = Math.random().toString(36).substring(2, 6);
-            generateQR(roomInput.value);
-            logDebug(`Disconnected and reset`);
+            // Reset UI
+            setupPanel.classList.remove('hidden');
+            callPanel.classList.add('hidden');
+            setupStatus.textContent = '';
+            connectedPeers = 0;
+            
+            // Generate a new room name
+            roomInput.value = 'room' + Math.floor(Math.random() * 1000);
+        });
+        
+        // Set a random room name
+        roomInput.value = 'room' + Math.floor(Math.random() * 1000);
+        
+        // Handle page unload - clean up
+        window.addEventListener('beforeunload', () => {
+            if (window.signalInterval) {
+                clearInterval(window.signalInterval);
+            }
+            peers.forEach(peer => {
+                if (peer) peer.destroy();
+            });
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
         });
     </script>
 </body>
