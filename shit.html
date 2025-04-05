@@ -1,83 +1,329 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Walkie-Talkie via QR (WebRTC)</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
-  <style>
-    body { font-family: sans-serif; padding: 2em; }
-    #qrcode, #scanAnswerQR { margin-top: 1em; }
-    textarea { width: 100%; height: 100px; }
-    button { padding: 0.5em 1em; margin-top: 1em; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Walkie Talkie</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .setup-container, .call-container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        #callButton {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background-color: #f44336;
+            color: white;
+            font-size: 18px;
+            border: none;
+            margin: 20px auto;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+        }
+        #callButton:active {
+            background-color: #d32f2f;
+            transform: scale(0.95);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #callButton:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+        }
+        .status {
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .hidden {
+            display: none;
+        }
+        #qrcode {
+            margin: 10px auto;
+        }
+    </style>
 </head>
 <body>
-  <h2>Walkie-Talkie via QR</h2>
-  <button onclick="startOffer()">Create Offer (Show QR)</button>
-  <div id="qrcode"></div>
+    <h1>Web Walkie Talkie</h1>
+    
+    <div class="container">
+        <div class="setup-container" id="setupContainer">
+            <h2>Setup Connection</h2>
+            <div class="input-group">
+                <label for="roomInput">Enter Room ID:</label>
+                <input type="text" id="roomInput" placeholder="Enter a unique room ID">
+                <button id="createRoomBtn">Create/Join Room</button>
+            </div>
+            <p>Or scan this QR code to join:</p>
+            <div id="qrcode"></div>
+            <p class="status" id="setupStatus"></p>
+        </div>
+        
+        <div class="call-container hidden" id="callContainer">
+            <h2>Connected to: <span id="roomDisplay"></span></h2>
+            <p class="status" id="connectionStatus">Waiting for peer...</p>
+            <p>Press and hold to talk:</p>
+            <button id="callButton" disabled>Press to Talk</button>
+            <button id="disconnectBtn">Disconnect</button>
+        </div>
+    </div>
 
-  <h3>Paste Answer (from QR or manually)</h3>
-  <textarea id="answerInput" placeholder="Paste answer here..."></textarea>
-  <button onclick="submitAnswer()">Submit Answer</button>
-
-  <h3>Hold to Talk</h3>
-  <button id="talkBtn" disabled>Hold to Talk</button>
-
-  <script>
-    let localConnection, remoteStream, localStream;
-
-    async function startOffer() {
-      localConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStream.getTracks().forEach(track => localConnection.addTrack(track, localStream));
-
-      const offer = await localConnection.createOffer();
-      await localConnection.setLocalDescription(offer);
-
-      localConnection.onicecandidate = () => {
-        if (localConnection.iceGatheringState === 'complete') {
-          const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(localConnection.localDescription));
-          document.getElementById('qrcode').innerHTML = '';
-          new QRCode(document.getElementById('qrcode'), {
-            text: compressed,
-            width: 256,
-            height: 256
-          });
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script>
+        // DOM elements
+        const setupContainer = document.getElementById('setupContainer');
+        const callContainer = document.getElementById('callContainer');
+        const roomInput = document.getElementById('roomInput');
+        const createRoomBtn = document.getElementById('createRoomBtn');
+        const setupStatus = document.getElementById('setupStatus');
+        const roomDisplay = document.getElementById('roomDisplay');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const callButton = document.getElementById('callButton');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const qrcodeDiv = document.getElementById('qrcode');
+        
+        // Variables for WebRTC
+        let peer;
+        let conn;
+        let localStream;
+        let call;
+        let roomId;
+        
+        // Generate a random room ID if none provided
+        roomInput.value = Math.random().toString(36).substring(2, 8);
+        
+        // Create QR code with current URL
+        function generateQR(roomId) {
+            qrcodeDiv.innerHTML = '';
+            const roomUrl = `${window.location.href.split('?')[0]}?room=${roomId}`;
+            new QRCode(qrcodeDiv, {
+                text: roomUrl,
+                width: 128,
+                height: 128
+            });
         }
-      };
-    }
-
-    async function submitAnswer() {
-      const compressed = document.getElementById('answerInput').value.trim();
-      if (!compressed) return alert('Please paste an answer');
-      const answer = JSON.parse(LZString.decompressFromEncodedURIComponent(compressed));
-      await localConnection.setRemoteDescription(answer);
-
-      localConnection.ontrack = (event) => {
-        remoteStream = event.streams[0];
-        const audio = new Audio();
-        audio.srcObject = remoteStream;
-        audio.play();
-        document.getElementById('talkBtn').disabled = false;
-      };
-
-      setupTalkButton();
-    }
-
-    function setupTalkButton() {
-      const btn = document.getElementById('talkBtn');
-      btn.addEventListener('mousedown', () => {
-        localStream.getAudioTracks()[0].enabled = true;
-      });
-      btn.addEventListener('mouseup', () => {
-        localStream.getAudioTracks()[0].enabled = false;
-      });
-      localStream.getAudioTracks()[0].enabled = false;
-    }
-  </script>
+        
+        // Check URL for room parameter
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomParam = urlParams.get('room');
+            if (roomParam) {
+                roomInput.value = roomParam;
+                createRoomBtn.click();
+            } else {
+                generateQR(roomInput.value);
+            }
+        });
+        
+        // Update QR code when room ID changes
+        roomInput.addEventListener('input', () => {
+            generateQR(roomInput.value);
+        });
+        
+        // Setup connection
+        createRoomBtn.addEventListener('click', async () => {
+            roomId = roomInput.value.trim();
+            if (!roomId) {
+                setupStatus.textContent = 'Please enter a room ID';
+                return;
+            }
+            
+            setupStatus.textContent = 'Initializing...';
+            
+            // Initialize PeerJS
+            peer = new Peer(roomId);
+            
+            // Handle connection open
+            peer.on('open', (id) => {
+                setupStatus.textContent = `Room created! Your ID: ${id}`;
+                roomDisplay.textContent = id;
+                
+                // Switch to call container
+                setupContainer.classList.add('hidden');
+                callContainer.classList.remove('hidden');
+                
+                // Setup audio
+                setupAudio();
+            });
+            
+            // Handle incoming connections
+            peer.on('connection', (connection) => {
+                conn = connection;
+                handleConnection();
+            });
+            
+            // Handle incoming calls
+            peer.on('call', (incomingCall) => {
+                call = incomingCall;
+                connectionStatus.textContent = 'Incoming call...';
+                
+                // Answer call with our stream
+                if (localStream) {
+                    call.answer(localStream);
+                    handleCall();
+                } else {
+                    connectionStatus.textContent = 'Error: No microphone access';
+                }
+            });
+            
+            // Handle errors
+            peer.on('error', (err) => {
+                console.error(err);
+                if (err.type === 'unavailable-id') {
+                    setupStatus.textContent = 'Room ID already taken. Connecting as peer...';
+                    // Connect to the peer
+                    connectToPeer(roomId);
+                } else {
+                    setupStatus.textContent = `Error: ${err.message}`;
+                }
+            });
+        });
+        
+        // Connect to peer
+        function connectToPeer(peerId) {
+            // Create a connection
+            conn = peer.connect(peerId);
+            
+            // Handle successful connection
+            conn.on('open', () => {
+                handleConnection();
+                
+                // If we have access to microphone, call the peer
+                if (localStream) {
+                    call = peer.call(peerId, localStream);
+                    handleCall();
+                }
+            });
+        }
+        
+        // Handle connection
+        function handleConnection() {
+            connectionStatus.textContent = 'Connected to peer!';
+            callButton.disabled = false;
+            
+            conn.on('close', () => {
+                connectionStatus.textContent = 'Peer disconnected';
+                callButton.disabled = true;
+            });
+        }
+        
+        // Handle call
+        function handleCall() {
+            call.on('stream', (remoteStream) => {
+                // Create audio element for remote stream
+                const audio = document.createElement('audio');
+                audio.srcObject = remoteStream;
+                audio.id = 'remoteAudio';
+                audio.autoplay = true;
+                document.body.appendChild(audio);
+            });
+            
+            call.on('close', () => {
+                const audio = document.getElementById('remoteAudio');
+                if (audio) audio.remove();
+            });
+        }
+        
+        // Setup audio
+        async function setupAudio() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                
+                // Set up audio track to be disabled initially (muted)
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = false;
+                });
+                
+                connectionStatus.textContent = 'Microphone access granted. Waiting for peer...';
+            } catch (err) {
+                console.error('Failed to get local stream', err);
+                connectionStatus.textContent = 'Error: Could not access microphone';
+            }
+        }
+        
+        // Push-to-talk functionality
+        callButton.addEventListener('mousedown', () => {
+            if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = true;
+                });
+                callButton.textContent = 'Talking...';
+            }
+        });
+        
+        callButton.addEventListener('mouseup', () => {
+            if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = false;
+                });
+                callButton.textContent = 'Press to Talk';
+            }
+        });
+        
+        // For touch devices
+        callButton.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = true;
+                });
+                callButton.textContent = 'Talking...';
+            }
+        });
+        
+        callButton.addEventListener('touchend', () => {
+            if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                    track.enabled = false;
+                });
+                callButton.textContent = 'Press to Talk';
+            }
+        });
+        
+        // Disconnect button
+        disconnectBtn.addEventListener('click', () => {
+            if (call) call.close();
+            if (conn) conn.close();
+            if (peer) peer.destroy();
+            
+            // Return to setup
+            callContainer.classList.add('hidden');
+            setupContainer.classList.remove('hidden');
+            setupStatus.textContent = '';
+            
+            // Cleanup
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            
+            const audio = document.getElementById('remoteAudio');
+            if (audio) audio.remove();
+        });
+    </script>
 </body>
 </html>
