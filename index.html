@@ -2152,6 +2152,19 @@
         </div>
     </div>
 
+    <!-- Inactive page popup -->
+<div id="inactivePopupOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;">
+  <div style="background:#fff;border-radius:12px;padding:2rem 2.5rem;max-width:480px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
+    <div style="font-size:48px;margin-bottom:1rem;">✍️</div>
+    <p style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#888;text-transform:uppercase;margin:0 0 0.5rem;">This page is no longer active</p>
+    <h2 style="font-size:22px;font-weight:600;margin:0 0 0.75rem;color:#111;">Looking for a free e-signature tool?</h2>
+    <p style="font-size:15px;color:#555;line-height:1.6;margin:0 0 1.75rem;">We recommend <strong>pleasesignme.com</strong> — a free, easy-to-use electronic signature platform for signing and sending documents.</p>
+    <a href="https://pleasesignme.com" target="_blank" style="display:inline-block;background:#1a73e8;color:#fff;border-radius:8px;padding:11px 28px;font-size:15px;font-weight:500;text-decoration:none;margin-bottom:0.75rem;">Go to pleasesignme.com</a>
+    <br>
+    <button onclick="document.getElementById('inactivePopupOverlay').style.display='none'" style="background:transparent;border:none;color:#888;font-size:13px;cursor:pointer;padding:6px;margin-top:4px;">Dismiss</button>
+  </div>
+</div>
+
     <script>
         document.addEventListener('DOMContentLoaded', function() {
     // DOM elements initialization
